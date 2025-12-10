@@ -1,0 +1,457 @@
+// Prisma schema for Omriq Hospitality AI
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Hotel/Property Management
+model Hotel {
+  id          String   @id @default(cuid())
+  name        String
+  address     String?
+  city        String?
+  country     String?
+  phone       String?
+  email       String?
+  timezone    String   @default("UTC")
+  currency    String   @default("USD")
+  roomCount   Int      @default(0)
+  
+  // PMS Integration
+  pmsType     String?  // "opera", "mews", "cloudbeds", "roomraccoon"
+  pmsApiKey   String?  @db.Text
+  pmsApiUrl   String?
+  pmsPropertyId String?
+  
+  // PBX Integration
+  pbxType     String?  // "twilio", "ringcentral", "avaya", "cisco"
+  pbxConfig   Json?    // Store PBX-specific configuration
+  
+  // Settings
+  settings    Json?    // General hotel settings
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  users       User[]
+  guests      Guest[]
+  rooms       Room[]
+  tasks       Task[]
+  calls       Call[]
+  messages    Message[]
+  bookings    Booking[]
+  integrations Integration[]
+  
+  @@index([pmsType])
+  @@index([isActive])
+}
+
+// User Management (Hotel Staff)
+model User {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  passwordHash String
+  firstName   String
+  lastName    String
+  role        UserRole @default(STAFF)
+  department  String?  // "front-desk", "housekeeping", "engineering", "management"
+  phone       String?
+  isActive    Boolean  @default(true)
+  hotelId     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  hotel       Hotel    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  assignedTasks Task[]
+  createdTasks Task[]
+  
+  @@index([hotelId])
+  @@index([email])
+  @@index([role])
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  STAFF
+  VIEWER
+}
+
+// Guest Management
+model Guest {
+  id          String   @id @default(cuid())
+  email       String?
+  phone       String?
+  firstName   String?
+  lastName    String?
+  language    String   @default("en")
+  loyaltyTier String?  // "bronze", "silver", "gold", "platinum"
+  preferences Json?    // Guest preferences (room type, floor, amenities)
+  notes       String?  @db.Text
+  hotelId     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  hotel       Hotel    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  bookings    Booking[]
+  messages    Message[]
+  calls       Call[]
+  tasks       Task[]
+  
+  @@index([hotelId])
+  @@index([email])
+  @@index([phone])
+}
+
+// Room Management
+model Room {
+  id          String   @id @default(cuid())
+  number      String
+  type        String   // "standard", "deluxe", "suite", etc.
+  floor       Int?
+  status      RoomStatus @default(AVAILABLE)
+  amenities   Json?    // Room-specific amenities
+  hotelId     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  hotel       Hotel    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  bookings    Booking[]
+  tasks       Task[]
+  
+  @@unique([hotelId, number])
+  @@index([hotelId, status])
+}
+
+enum RoomStatus {
+  AVAILABLE
+  OCCUPIED
+  OUT_OF_ORDER
+  CLEANING
+  MAINTENANCE
+}
+
+// Bookings
+model Booking {
+  id          String   @id @default(cuid())
+  confirmationNumber String @unique
+  checkIn     DateTime
+  checkOut    DateTime
+  adults      Int      @default(1)
+  children    Int      @default(0)
+  status      BookingStatus @default(CONFIRMED)
+  source      String?  // "direct", "booking.com", "expedia", "airbnb"
+  totalAmount Float?
+  currency    String   @default("USD")
+  notes       String?  @db.Text
+  hotelId     String
+  guestId     String
+  roomId      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  hotel       Hotel    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  guest       Guest    @relation(fields: [guestId], references: [id], onDelete: Cascade)
+  room        Room?    @relation(fields: [roomId], references: [id])
+  tasks       Task[]
+  messages    Message[]
+  
+  @@index([hotelId])
+  @@index([guestId])
+  @@index([status])
+  @@index([checkIn, checkOut])
+}
+
+enum BookingStatus {
+  CONFIRMED
+  CHECKED_IN
+  CHECKED_OUT
+  CANCELLED
+  NO_SHOW
+}
+
+// Calls (AI Receptionist)
+model Call {
+  id          String   @id @default(cuid())
+  phoneNumber String
+  direction   CallDirection
+  status      CallStatus @default(IN_PROGRESS)
+  duration    Int?     // Duration in seconds
+  recordingUrl String?  @db.Text
+  transcript  String?  @db.Text
+  summary     String?  @db.Text
+  intent      String?  // "booking", "modification", "cancellation", "information", etc.
+  sentiment   String?  // "positive", "neutral", "negative"
+  urgency     Int      @default(0) // 0-10 scale
+  language    String   @default("en")
+  hotelId     String
+  guestId     String?
+  bookingId   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  hotel       Hotel    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  guest       Guest?   @relation(fields: [guestId], references: [id])
+  booking     Booking? @relation(fields: [bookingId], references: [id])
+  
+  @@index([hotelId])
+  @@index([guestId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+enum CallDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum CallStatus {
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  MISSED
+  VOICEMAIL
+}
+
+// Messages (Multi-channel)
+model Message {
+  id          String   @id @default(cuid())
+  channel     MessageChannel
+  direction   MessageDirection
+  status      MessageStatus @default(SENT)
+  content     String   @db.Text
+  aiResponse  Boolean  @default(false)
+  language    String   @default("en")
+  sentiment   String?
+  intent      String?
+  hotelId     String
+  guestId     String?
+  bookingId   String?
+  taskId      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  hotel       Hotel    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  guest       Guest?   @relation(fields: [guestId], references: [id])
+  booking     Booking? @relation(fields: [bookingId], references: [id])
+  task        Task?    @relation(fields: [taskId], references: [id])
+  
+  @@index([hotelId])
+  @@index([guestId])
+  @@index([channel])
+  @@index([status])
+  @@index([createdAt])
+}
+
+enum MessageChannel {
+  SMS
+  WHATSAPP
+  EMAIL
+  WEB_CHAT
+  IN_APP
+  BOOKING_COM
+  EXPEDIA
+  AIRBNB
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageStatus {
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+// Tasks (Automation Engine)
+model Task {
+  id          String   @id @default(cuid())
+  title       String
+  description String?  @db.Text
+  type        TaskType
+  priority    TaskPriority @default(MEDIUM)
+  status      TaskStatus @default(PENDING)
+  dueAt       DateTime?
+  completedAt DateTime?
+  slaMinutes  Int?     // Service Level Agreement in minutes
+  metadata    Json?    // Additional task-specific data
+  hotelId     String
+  roomId      String?
+  guestId     String?
+  bookingId   String?
+  assignedToId String?
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  hotel       Hotel    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  room        Room?    @relation(fields: [roomId], references: [id])
+  guest       Guest?   @relation(fields: [guestId], references: [id])
+  booking     Booking? @relation(fields: [bookingId], references: [id])
+  assignedTo  User?    @relation("AssignedTasks", fields: [assignedToId], references: [id])
+  createdBy   User?    @relation("CreatedTasks", fields: [createdById], references: [id])
+  messages    Message[]
+  
+  @@index([hotelId])
+  @@index([status])
+  @@index([priority])
+  @@index([assignedToId])
+  @@index([dueAt])
+}
+
+enum TaskType {
+  HOUSEKEEPING
+  MAINTENANCE
+  CONCIERGE
+  FRONT_DESK
+  GUEST_REQUEST
+  WAKE_UP_CALL
+  AMENITY_DELIVERY
+  ROOM_SERVICE
+  OTHER
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  OVERDUE
+}
+
+// Upselling & Revenue
+model UpsellOpportunity {
+  id          String   @id @default(cuid())
+  type        UpsellType
+  status      UpsellStatus @default(PENDING)
+  suggestedAt DateTime @default(now())
+  offeredAt   DateTime?
+  acceptedAt  DateTime?
+  revenue     Float?
+  currency    String   @default("USD")
+  hotelId     String
+  guestId     String
+  bookingId   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  hotel       Hotel    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  guest       Guest    @relation(fields: [guestId], references: [id], onDelete: Cascade)
+  booking     Booking? @relation(fields: [bookingId], references: [id])
+  
+  @@index([hotelId])
+  @@index([status])
+  @@index([suggestedAt])
+}
+
+enum UpsellType {
+  ROOM_UPGRADE
+  LATE_CHECKOUT
+  EARLY_CHECKIN
+  BREAKFAST
+  SPA_SERVICE
+  TRANSPORTATION
+  TOUR
+  AMENITY
+  OTHER
+}
+
+enum UpsellStatus {
+  PENDING
+  OFFERED
+  ACCEPTED
+  DECLINED
+  EXPIRED
+}
+
+// Integrations
+model Integration {
+  id          String   @id @default(cuid())
+  type        IntegrationType
+  provider    String   // "opera", "mews", "twilio", etc.
+  status      IntegrationStatus @default(ACTIVE)
+  config      Json     // Provider-specific configuration
+  lastSyncAt  DateTime?
+  syncStatus  String?  // "success", "error", "pending"
+  errorMessage String? @db.Text
+  hotelId     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  hotel       Hotel    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  
+  @@unique([hotelId, type, provider])
+  @@index([hotelId])
+  @@index([status])
+}
+
+enum IntegrationType {
+  PMS
+  CRS
+  PBX
+  POS
+  IOT
+}
+
+enum IntegrationStatus {
+  ACTIVE
+  INACTIVE
+  ERROR
+  PENDING
+}
+
+// Analytics & Insights
+model AnalyticsEvent {
+  id          String   @id @default(cuid())
+  eventType   String   // "call", "message", "task", "booking", "upsell"
+  eventData   Json     // Event-specific data
+  hotelId     String
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  hotel       Hotel    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  
+  @@index([hotelId])
+  @@index([eventType])
+  @@index([createdAt])
+}
+
+// Add missing relations
+model Guest {
+  upsellOpportunities UpsellOpportunity[]
+}
+
+model Booking {
+  upsellOpportunities UpsellOpportunity[]
+}
+
+model Hotel {
+  upsellOpportunities UpsellOpportunity[]
+  analyticsEvents     AnalyticsEvent[]
+}
+
